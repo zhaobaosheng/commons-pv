@@ -1,4 +1,4 @@
-package com.sinosoft.ie.commons.pv;
+package com.zdawn.commons.pv;
 /**
  * message interface
  * 实现类必须实现空构造方法

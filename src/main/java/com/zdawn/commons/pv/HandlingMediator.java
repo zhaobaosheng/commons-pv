@@ -1,4 +1,4 @@
-package com.sinosoft.ie.commons.pv;
+package com.zdawn.commons.pv;
 /**
  * 协调类之间协作
  * @author zhaobaosheng

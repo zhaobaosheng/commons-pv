@@ -1,6 +1,9 @@
-package com.sinosoft.ie.commons.pv;
+package com.zdawn.commons.pv;
 
 import java.util.Random;
+
+import com.zdawn.commons.pv.Message;
+import com.zdawn.commons.pv.MessageHandler;
 
 public class MockMessageHandler implements MessageHandler {
 

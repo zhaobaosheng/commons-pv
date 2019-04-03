@@ -1,4 +1,4 @@
-package com.sinosoft.ie.commons.pv;
+package com.zdawn.commons.pv;
 /**
  * dispose message interface
  * @author zhaobaosheng
