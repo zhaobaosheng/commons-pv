@@ -6,10 +6,6 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,9 +13,9 @@ import org.slf4j.LoggerFactory;
 public class DefaultSuperviser implements Superviser {
 	private static Logger log = LoggerFactory.getLogger(DefaultSuperviser.class);
 	/**
-	 * 参与消息处理流程
+	 * 断路器功能是否开启
 	 */
-	private boolean joinMessageProcessing = true;
+	private boolean breakerOn = true;
 	/**
 	 * 统计滚动消息处理时长 单位是毫秒
 	 */
@@ -33,15 +29,10 @@ public class DefaultSuperviser implements Superviser {
      * <br>超出阀值暂停添加消息、处理消息
      */
     private float errorThresholdPercentage = 0.2f;
-//    /**
-//     * 最近 时间分片错误消息个数阀值
-//     * <br>超出阀值暂停添加消息、处理消息
-//     */
-//    private long errorThresholdNumberOfLastBucket = 5;
     /**
-     * 暂停消息处理流程时间
+     * 暂停消息处理时间
      */
-    private long pauseMessageProcessingTime = 5000L;
+    private long pauseMessageProcessingTime = 2000L;
     /**
      * 暂停消息处理开关
      * <br> 0 关闭
@@ -54,52 +45,15 @@ public class DefaultSuperviser implements Superviser {
      */
     private long curCheckMsgProcessingTime = 0L;
     /**
-     * 消息处理接口实现类名
-     */
-    private String handleClazzName;
-    /**
-     * 统计消息处理结果最大缓存
-     * <br>超过最大值舍弃
-     */
-    private int messageHandleResultMaxSize = 1000;
-    /**
      * 消息处理统计链表
      */
     private LinkedList<StatBucktet> statsBucketList = new LinkedList<StatBucktet>();
-    /**
-     * 消息处理结果缓存
-     */
-    private LinkedList<Object[]> resultList = new LinkedList<Object[]>();
-    /**
-     * 是否统计消息处理结果
-     */
-    private boolean isStat = true;
-    /**
-     * 计算处理结果消息最大线程数
-     */
-    private int maxPoolSize = 5 ;
-    private long keepAliveTime = 5000L;
-    /**
-	 * 等待分配消息处理结果再次执行的周期，单位毫秒
-	 */
-	private long waitExecutePeriod = 1000L;
-    /**
-	 * 线程池
-	 */
-	private ThreadPoolExecutor threadPool = null;
-	/**
-	 * 统计消息处理结果计算者
-	 */
-	private LinkedList<HandleResultCalculator> handleResultCalculatorList = new LinkedList<HandleResultCalculator>();
-	/**
-	 * 当前HandleResultCalculator数量
-	 */
-	private List<HandleResultCalculator> handleResultCalculatorAll = new ArrayList<HandleResultCalculator>();
+
     /**
      * 获取处理消息的开关
      */
     public int getBreakerStatus(){
-    	if(!joinMessageProcessing) return 0;
+    	if(!breakerOn) return 0;
     	if(breaker==1){//开关打开
     		if(System.currentTimeMillis()-curCheckMsgProcessingTime>pauseMessageProcessingTime){//大于阈值 将开关半开
     			breaker = 2 ;
@@ -120,76 +74,46 @@ public class DefaultSuperviser implements Superviser {
      */
     public void collectMessageHandleResult(long startHandlingTime,long spendTime,
 			boolean success){
-    	if(isStat){
-    		Object[] result = new Object[]{success?1:0,startHandlingTime,spendTime};
-    		if(resultList.size()<messageHandleResultMaxSize){
-    			resultList.add(result);
-    			synchronized (resultList) {
-    				resultList.notify();
-				}
-    		}else{
-    			log.warn("handle result message already reach max size "+messageHandleResultMaxSize+" clear old data");
-    			synchronized (resultList) {
-    				resultList.clear();
-    				resultList.add(result);
-				}
-    		}
+    	//断路器功能开启
+    	if(breakerOn) {
+    		calcHandleResultForBreaker(success, startHandlingTime, spendTime);
     	}
     }
-    /**
-     * 收集线程池拒绝数据
+
+	/**
+     *  收集消息处理者拒绝执行结果
      * @param startHandlingTime 处理开始时间 毫秒 
      * @param spendTime 花费时间 毫秒
      */
     public void collectMessageRejection(long startHandlingTime,long spendTime){
-    	if(isStat){
-    		Object[] result = new Object[]{2,startHandlingTime,spendTime};
-    		if(resultList.size()<messageHandleResultMaxSize){
-    			resultList.add(result);
-    			synchronized (resultList) {
-    				resultList.notify();
-				}
-    		}else{
-    			log.warn("handle result message already reach max size "+messageHandleResultMaxSize+" clear old data");
-    			synchronized (resultList) {
-    				resultList.clear();
-    				resultList.add(result);
-				}
-    		}	
+    	//断路器功能开启
+    	if(breakerOn) {
+    		calcHandleResultForRejection(startHandlingTime, spendTime);
     	}
     }
-    /**
-     * 初始化
-     */
-    public void init(){
-    	createThreadPool();
-    	Thread thread = new Thread(new HandleResultBroker());
-    	thread.start();
-    }
+ 
     /**
      * 获取监控数据快照
      */
     public Map<String,Object> getMonitorInfoSnapshot(){
     	Map<String,Object> data = new HashMap<String,Object>();
-    	data.put("handleClazzName", handleClazzName);
     	data.put("breaker", breaker);
-    	data.put("handleMsgResultSize", resultList.size());
-    	List<StatBucktet> list = new ArrayList<StatBucktet>();
-    	for(Iterator<StatBucktet> it = statsBucketList.iterator(); it.hasNext();){
-    		StatBucktet origin = it.next();
-    		for (HandleResultCalculator handleResultCalculator : handleResultCalculatorAll) {
-    			StatBucktet copy = handleResultCalculator.findCopyStatBucktet(origin);
-    			if(copy!=null) origin.merge(copy);
-			}
-    		list.add(origin);
-    	}
+    	List<Map<String,Object>> list = new ArrayList<>();
+    	for (StatBucktet statBucktet : statsBucketList) {
+    		Map<String,Object> row = new HashMap<>();
+    		row.put("successCount", statBucktet.getSuccessCount());
+    		row.put("failureCount", statBucktet.getFailureCount());
+    		row.put("rejectionCount", statBucktet.getRejectionCount());
+    		row.put("successAvgHandleTime", statBucktet.getSuccessAvgHandleTime());
+    		row.put("successMaxHandleTime", statBucktet.getSuccessMaxHandleTime());
+    		row.put("statStartMsTime", statBucktet.getStatStartMsTime());
+    		row.put("statTimeBucktet", statBucktet.getStatTimeBucktet());
+    		list.add(row);
+		}
     	data.put("statsBucketList",list);
     	return data;
     }
     
-    public void recycleHandleResultCalculator(HandleResultCalculator handleResultCalculator){
-    	handleResultCalculatorList.push(handleResultCalculator);
-    }
     /**
      * 根据处理时间找到StatBucktet
      * @param handlingTime 处理时间
@@ -210,18 +134,13 @@ public class DefaultSuperviser implements Superviser {
      * breaker can open
      */
     public void calcBreakerStatus(){
-    	if(joinMessageProcessing && statsBucketList.size()>0){
+    	if(breakerOn && statsBucketList.size()>0){
     		long errorCount = 0L;
     		long successCount = 0L;
 	    	for(Iterator<StatBucktet> it = statsBucketList.iterator(); it.hasNext();){
-	    		StatBucktet origin = it.next();
-	    		for (HandleResultCalculator handleResultCalculator : handleResultCalculatorAll) {
-	    			StatBucktet copy = handleResultCalculator.findCopyStatBucktet(origin);
-	    			if(copy!=null){
-	    				errorCount = errorCount + copy.getFailureCount();
-		    			successCount = successCount+copy.getSuccessCount();
-	    			}
-				}
+	    		StatBucktet temp = it.next();
+	    		errorCount = errorCount + temp.getFailureCount();
+    			successCount = successCount+temp.getSuccessCount();
 	    	}
 	    	float curPercentage = 1f*errorCount/(errorCount+successCount);
 	    	if(curPercentage > errorThresholdPercentage){
@@ -229,35 +148,6 @@ public class DefaultSuperviser implements Superviser {
 	    		curCheckMsgProcessingTime = System.currentTimeMillis();
 	    	}	
     	}
-    }
-    
-    private ThreadPoolExecutor createThreadPool(){
-		if(threadPool!=null) return threadPool;
-		threadPool = new ThreadPoolExecutor(1, maxPoolSize,
-				keepAliveTime, TimeUnit.MILLISECONDS,
-                new SynchronousQueue<Runnable>());
-		return threadPool;
-	}
-    private boolean executeTask(Runnable eworker,ThreadPoolExecutor threadPool){
-		boolean success = true;
-		try {
-			threadPool.execute(eworker);
-		} catch (RejectedExecutionException e) {
-			success = false;
-		}
-		return success;
-	}
-    private HandleResultCalculator getHandleResultCalculator(){
-    	if(handleResultCalculatorList.size()<1){
-    		if(handleResultCalculatorAll.size() >= maxPoolSize){
-    			return null;
-    		}else{
-    			HandleResultCalculator temp = new HandleResultCalculator(this);
-    			handleResultCalculatorAll.add(temp);
-    			handleResultCalculatorList.push(temp);
-    		}
-    	}
-    	return handleResultCalculatorList.removeFirst();
     }
     /**
      * 维护消息处理结果统计链表
@@ -277,55 +167,37 @@ public class DefaultSuperviser implements Superviser {
     		statsBucketList.push(bucket);
     	}
     }
-    
-    private void consumeMessageHandleResult(){
-    	while(isStat){
-    		try {
-    			if(resultList.size()==0){
-    				synchronized (resultList) {
-    					resultList.wait();
-					}
-    			}
-    			Object[] result = resultList.removeFirst();
-    			manageStatBucktetList((Long)result[1]);
-    			//执行
-    			while(true){
-    				HandleResultCalculator temp = getHandleResultCalculator();
-    				if(temp!=null){
-    					temp.setResult(result);
-    					if(executeTask(temp,threadPool)) break;
-    					else recycleHandleResultCalculator(temp);
-    				}else{
-						//等待一个周期
-    					try {
-    						log.warn("exec handle result threadpool is drain. Now wait next period to do!");
-    						Thread.sleep(waitExecutePeriod);
-    					} catch (InterruptedException e) {}	
-    				}
-    			}
-    		} catch (InterruptedException e) {
-    			log.error("consumeMessageHandleResult",e);
-    		}
+	
+	public void init() {
+	}
+	
+	private void calcHandleResultForBreaker(boolean success,long startHandlingTime,long spendTime) {
+		//维护统计链表
+		manageStatBucktetList(startHandlingTime);
+		StatBucktet bucket = getStatBucktet(startHandlingTime);
+    	if(bucket!=null){
+    		bucket.calc(success ? 1:0, spendTime);
+    		//处理失败情况-开关是否打开
+        	if(!success) calcBreakerStatus();
+    	}else {
+    		log.error("origin StatBucktet is null,must be having bug.");
     	}
-    }
-    class HandleResultBroker implements Runnable{
-		@Override
-		public void run() {
-			consumeMessageHandleResult();
-		}
-    }
+	}
+	private void calcHandleResultForRejection(long startHandlingTime,long spendTime) {
+		//维护统计链表
+		manageStatBucktetList(startHandlingTime);
+		StatBucktet bucket = getStatBucktet(startHandlingTime);
+    	if(bucket!=null){
+    		bucket.calc(2, spendTime);
+    	}else {
+    		log.error("origin StatBucktet is null,must be having bug.");
+    	}
+	}
+	
+	public void setBreakerOn(boolean breakerOn) {
+		this.breakerOn = breakerOn;
+	}
 
-	public void setHandleClazzName(String handleClazzName) {
-		this.handleClazzName = handleClazzName;
-	}
-	
-	public void stopStat(){
-		this.isStat = true;
-	}
-	
-	public void setJoinMessageProcessing(boolean joinMessageProcessing) {
-		this.joinMessageProcessing = joinMessageProcessing;
-	}
 	public void setRollingStatsTime(long rollingStatsTime) {
 		this.rollingStatsTime = rollingStatsTime;
 	}
@@ -338,22 +210,9 @@ public class DefaultSuperviser implements Superviser {
 	public void setPauseMessageProcessingTime(long pauseMessageProcessingTime) {
 		this.pauseMessageProcessingTime = pauseMessageProcessingTime;
 	}
-	public void setMessageHandleResultMaxSize(int messageHandleResultMaxSize) {
-		this.messageHandleResultMaxSize = messageHandleResultMaxSize;
+
+	public long getPauseMessageProcessingTime() {
+		return pauseMessageProcessingTime;
 	}
-	public long getRollingStatsTime() {
-		return rollingStatsTime;
-	}
-	public int getRollingStatsNumBuckets() {
-		return rollingStatsNumBuckets;
-	}
-	public void setMaxPoolSize(int maxPoolSize) {
-		this.maxPoolSize = maxPoolSize;
-	}
-	public void setWaitExecutePeriod(long waitExecutePeriod) {
-		this.waitExecutePeriod = waitExecutePeriod;
-	}
-	public void setKeepAliveTime(long keepAliveTime) {
-		this.keepAliveTime = keepAliveTime;
-	}
+	
 }

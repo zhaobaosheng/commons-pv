@@ -7,21 +7,21 @@ import java.util.Map;
  * @author zhaobaosheng
  * 2018-01-12
  */
-public class MessageWrapper {
+public class MessageWrapper<T> {
 	/**
 	 * 消息
 	 */
-	private Message msg;
+	private T msg;
 	/**
 	 * 消息上下文参数
 	 */
 	private Map<String,Object> context = new HashMap<String,Object>();
 	
-	public MessageWrapper(Message msg){
+	public MessageWrapper(T msg){
 		this.msg = msg;
 	}
 	
-	public Message getMsg() {
+	public T getMsg() {
 		return msg;
 	}
 

@@ -4,10 +4,6 @@ import java.util.Map;
 
 public interface Superviser {
 	/**
-	 * 设置消息处理实现者的标识
-	 */
-	public void setHandleClazzName(String handleClazzName);
-	/**
 	 * 能否处理消息的开关
 	 * <br> 0 关闭
      * <br> 1 打开
@@ -39,4 +35,8 @@ public interface Superviser {
 	 * 获取监控信息快照
 	 */
 	public Map<String,Object> getMonitorInfoSnapshot();
+	/**
+	 * 断路器断开时间
+	 */
+	public long getPauseMessageProcessingTime();
 }

@@ -1,27 +1,19 @@
 package com.zdawn.commons.pv;
 
-import com.zdawn.commons.pv.DefaultMsgBroker;
-import com.zdawn.commons.pv.DefaultSuperviser;
-import com.zdawn.commons.pv.DisposeUnit;
-import com.zdawn.commons.pv.FileMessageQueue;
-import com.zdawn.commons.pv.StringMessage;
+import java.util.HashMap;
+import java.util.Map;
 
 public class TestDisposeUnit {
 
 	public static void main(String[] args) {
+		Map<String,String> para = new HashMap<>();
+		para.put("queue-msg-store-path", "E:\\source-code\\mygit\\commons-pv\\src\\test\\pv");
 		DisposeUnit disposeUnit = new DisposeUnit();
 		disposeUnit.setMessageHandler(new MockMessageHandler());
-		DefaultMsgBroker msgBroker = new DefaultMsgBroker();
-		msgBroker.setCorePoolSize(10);
-		msgBroker.setMaxPoolSize(30);
-		disposeUnit.setMsgBroker(msgBroker);
-		FileMessageQueue msgQueue = new FileMessageQueue();
-		msgQueue.setQueueMessageStorePath("C:/Users/zhaobaosheng/Desktop/tmp/pv-test");
-		msgQueue.setMsgClazzName("com.sinosoft.ie.commons.pv.StringMessage");
-		disposeUnit.setMsgQueue(msgQueue);
-		DefaultSuperviser superviser = new DefaultSuperviser();
-		superviser.setHandleClazzName("MockMessageHandler");
-		disposeUnit.setSuperviser(superviser);
+		disposeUnit.setDisposeUnitTag("test");
+		disposeUnit.setHandleThreadCount(10);
+		disposeUnit.setMessageQueueClazzName("com.zdawn.commons.pv.FileMessageQueue");
+		disposeUnit.setPara(para);
 		//init
 		disposeUnit.init();
 		//add message
@@ -30,15 +22,18 @@ public class TestDisposeUnit {
 			count = count +1;
 			try {
 				StringMessage msg = new StringMessage("{\"result\":1,\"name\":\"java之父\"}");
+				msg.setHashKey("==="+count);
 				boolean success = disposeUnit.addMessage(msg);
 				System.out.println("add message result="+success);
-				Thread.sleep(500);
 			} catch (Exception e) {}
-			if(count%10==0){
+			if(count%1000==0){
 				System.out.println(disposeUnit.getMonitorInfoSnapshot());
 				disposeUnit.loadPendingMessage();
+				try {
+					Thread.sleep(1000);
+				} catch (InterruptedException e) {
+				}
 			}
 		}
 	}
-
 }

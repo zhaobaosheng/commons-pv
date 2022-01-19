@@ -5,11 +5,13 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URLEncoder;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedList;
+import java.util.Map;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -17,10 +19,10 @@ import org.slf4j.LoggerFactory;
 
 /**
  * 实现消息队列接口，使用文件存储消息，保证消息不丢失
- * @author zhaobs
- * 2018-01-12
+ * @author zhaobaosheng
+ * 2022-01-16
  */
-public class FileMessageQueue implements MessageQueue{
+public class FileMessageQueue implements MessageQueue<StringMessage>{
 	private static Logger logger = LoggerFactory.getLogger(FileMessageQueue.class);
 	/**
 	 * 队列最大深度
@@ -29,7 +31,7 @@ public class FileMessageQueue implements MessageQueue{
 	/**
 	 * task 队列
 	 */
-	private LinkedList<MessageWrapper> queueMsg = new LinkedList<MessageWrapper>();
+	private LinkedList<MessageWrapper<StringMessage>> queueMsg = new LinkedList<>();
 	/**
 	 * 存储消息的路径
 	 */
@@ -47,15 +49,13 @@ public class FileMessageQueue implements MessageQueue{
 	 */
 	private int msgHandleTimes = 3;
 	/**
-	 * message full class name 
+	 * 监控类
 	 */
-	private String msgClazzName;
-	
-	private HandlingMediator mediator;
+	private Superviser superviser;
 	/**
 	 * 获取消息
 	 */
-	public synchronized MessageWrapper pollMessage(){
+	public synchronized MessageWrapper<StringMessage> pollMessage(){
 		try {
 			while(queueMsg.size()==0){
 				wait();
@@ -68,8 +68,8 @@ public class FileMessageQueue implements MessageQueue{
 	/**
 	 * 添加消息
 	 */
-	public synchronized boolean putMessage(Message msg){
-		if(mediator.getBreakerStatus()==1){
+	public synchronized boolean putMessage(StringMessage msg){
+		if(superviser.getBreakerStatus()==1){
 			logger.warn("breaker status is open,can not put message");
 			return false;
 		}
@@ -77,18 +77,18 @@ public class FileMessageQueue implements MessageQueue{
 		//保存消息到文件
 		try {
 			String fileName = saveMessage(msg,0,"que");
-			MessageWrapper wrapper = new MessageWrapper(msg);
+			MessageWrapper<StringMessage> wrapper = new MessageWrapper<StringMessage>(msg);
 			wrapper.putAttribute("fileName", fileName);
 			queueMsg.add(wrapper);
 		} catch (Exception e) {
 			logger.error("putMessage",e);
 			return false;
 		}
-		notifyAll();
+		notify();
 		return true;
 	}
 	private synchronized boolean putMessage(String fileName){
-		if(mediator.getBreakerStatus()==1){
+		if(superviser.getBreakerStatus()==1){
 			logger.warn("breaker status is open,can not put message");
 			return false;
 		}
@@ -96,24 +96,38 @@ public class FileMessageQueue implements MessageQueue{
 		try {
 			int index = fileName.lastIndexOf('.');
 			if(index==-1) return false;
+			String nameExceptExt = fileName.substring(0, index);
+			String[] parts = nameExceptExt.split("-");
+			if(parts.length!=3) return false;
 			//rename
 			String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+fileName;
-			String destFileName = fileName.substring(0,index)+".que";
+			String destFileName = nameExceptExt +".que";
 			String destPath = queueMessageStorePath+'/'+pendingMsgPath+'/'+destFileName;
 			if(!moveFile(path, destPath)) return false;
 			//load data
-			Class<?> clazz = getClass().getClassLoader().loadClass(msgClazzName);
-			Message msg = (Message)clazz.newInstance();
 			byte[] data = readFile(destPath);
-			msg.importMessage(data);
-			MessageWrapper wrapper = new MessageWrapper(msg);
+			String all = new String(data,"utf-8");
+			index = all.indexOf('&');
+			String payload = null;
+			String hashKey = null;
+			if(index==-1) {
+				return false;
+			}else if(index==0) {//hashKey is empty
+				payload = all.substring(index+1);
+			}else {
+				hashKey = all.substring(0,index);
+				payload = all.substring(index+1);
+			}
+			StringMessage msg = new StringMessage(payload,hashKey);
+			msg.setMessageId(parts[0]);
+			MessageWrapper<StringMessage> wrapper = new MessageWrapper<StringMessage>(msg);
 			wrapper.putAttribute("fileName", destFileName);
 			queueMsg.add(wrapper);
 		} catch (Exception e) {
 			logger.error("putMessage",e);
 			return false;
 		}
-		notifyAll();
+		notify();
 		return true;
 	}
 	/**
@@ -133,8 +147,19 @@ public class FileMessageQueue implements MessageQueue{
 		return maxSize;
 	}
 	
-	public void init() {
-		if(mediator==null) throw new RuntimeException("HandlingMediator is not setting");
+	public void init(Map<String,String> para) {
+		//参数
+		String temp = para.get("queue-max-size");
+		if(temp!=null && !"".equals(temp)) {
+			maxSize = Integer.parseInt(temp);
+		}
+		temp = para.get("queue-msg-handle-times");
+		if(temp!=null && !"".equals(temp)) {
+			msgHandleTimes = Integer.parseInt(temp);
+		}
+		temp = para.get("queue-msg-store-path");
+		if(temp ==null || "".equals(temp)) throw new RuntimeException("queue-msg-store-path 未设置");
+		queueMessageStorePath = temp;
 		//检查创建目录
 		String path = queueMessageStorePath+'/'+pendingMsgPath;
 		File file = new File(path);
@@ -146,14 +171,16 @@ public class FileMessageQueue implements MessageQueue{
 		path = queueMessageStorePath+'/'+pendingMsgPath;
 		file = new File(path);
 		File[] fileList = file.listFiles();
-		for (File tempFile : fileList) {
-			String fileName = tempFile.getName();
-			if(!fileName.endsWith(".que")) continue;
-			int index = fileName.lastIndexOf('.');
-			String destFileName = fileName.substring(0,index)+".msg";
-			String destPath = path+'/'+destFileName;
-			if(!moveFile(tempFile.getAbsolutePath(),destPath)){
-				logger.error(fileName+" rename "+destFileName+" error");
+		if(fileList!=null) {
+			for (File tempFile : fileList) {
+				String fileName = tempFile.getName();
+				if(!fileName.endsWith(".que")) continue;
+				int index = fileName.lastIndexOf('.');
+				String destFileName = fileName.substring(0,index)+".msg";
+				String destPath = path+'/'+destFileName;
+				if(!moveFile(tempFile.getAbsolutePath(),destPath)){
+					logger.error(fileName+" rename "+destFileName+" error");
+				}
 			}
 		}
 	}
@@ -166,13 +193,23 @@ public class FileMessageQueue implements MessageQueue{
 	 * @return 仅返回文件名
 	 * @throws Exception
 	 */
-	private String saveMessage(Message msg,int times,String ext) throws Exception{
-		String fileName = UUID.randomUUID().toString().replace("-", "")+'-'+System.currentTimeMillis()+'-'+times+'.'+ext;
+	private String saveMessage(StringMessage msg,int times,String ext) throws Exception{
+		if(msg.getMessageId()==null) {
+			msg.setMessageId(UUID.randomUUID().toString().replace("-", ""));
+		}
+		String fileName = msg.getMessageId() +'-'+System.currentTimeMillis()+'-'+times+'.'+ext;
 		String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+fileName;
 		FileOutputStream fos = null;
 		try {
+			StringBuilder sb = new StringBuilder();
+			if(msg.getHashKey()==null || "".equals(msg.getHashKey())) {
+				sb.append('&');
+			}else {
+				sb.append(URLEncoder.encode(msg.getHashKey(), "utf-8")+"&");
+			}
+			sb.append(msg.getPayload());
 			fos = new FileOutputStream(path);
-			fos.write(msg.exportMessage());
+			fos.write(sb.toString().getBytes("utf-8"));
 			fos.flush();
 		} catch (Exception e) {
 			throw e;
@@ -218,23 +255,22 @@ public class FileMessageQueue implements MessageQueue{
 		}
 	}
 	
-	public void onHandleMsgResult(boolean success, MessageWrapper msgWrapper) {
+	public void onHandleMsgResult(int result, MessageWrapper<StringMessage> msgWrapper) {
 		Object obj = msgWrapper.getAttribute("fileName");
 		if(obj==null || "".equals(obj)){
 			logger.warn("the onHandleMsgResult method fileName is empty");
 			return;
 		}
 		String fileName = obj.toString();
-		if(success){
+		if(result==1){
 			removeMessage(fileName);
-		}else{
+		}else if(result==0){
 			renameMsgFile(fileName, 1);
+		}else {
+			moveMessage(fileName);
 		}
 	}
-	
-	public void configureMediator(HandlingMediator mediator) {
-		this.mediator = mediator;
-	}
+
 	/**
 	 * 检查消息执行次数
 	 * 如果大于等于设置执行次数,移动到错误消息存储路径
@@ -266,6 +302,17 @@ public class FileMessageQueue implements MessageQueue{
 		if(!file.delete()){//删除失败
 			//记录日志
 			saveErrorLog(file.getAbsolutePath());
+		}
+	}
+	private void moveMessage(String fileName) {
+		int index = fileName.lastIndexOf('.');
+		if(index==-1) return;
+		String nameExceptExt = fileName.substring(0, index);
+		String[] parts = nameExceptExt.split("-");
+		String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+fileName;
+		String destPath = queueMessageStorePath+'/'+errorMsgPath+'/'+parts[0]+'-'+parts[1]+"-rejection.msg";
+		if(!moveFile(path, destPath)){
+			logger.error(path+" rename "+destPath+" failture");
 		}
 	}
 	//记录删除失败日志
@@ -364,7 +411,7 @@ public class FileMessageQueue implements MessageQueue{
 	public void setMsgHandleTimes(int msgHandleTimes) {
 		this.msgHandleTimes = msgHandleTimes;
 	}
-	public void setMsgClazzName(String msgClazzName) {
-		this.msgClazzName = msgClazzName;
+	public void setSuperviser(Superviser superviser) {
+		this.superviser = superviser;
 	}
 }

@@ -7,8 +7,9 @@ package com.zdawn.commons.pv;
 public interface MessageHandler {
 	/**
 	 * 处理消息 如果抛出Exception则认为处理消息失败
-	 * @param Message
+	 * @param msg 消息
+	 * @return 1 消息处理成功 0 处理失败 2消息不能处理
 	 * @throws Exception
 	 */
-	public void handleMessage(Message msg) throws Exception;
+	public int handleMessage(StringMessage msg) throws Exception;
 }

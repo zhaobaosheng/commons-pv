@@ -1,6 +1,10 @@
 package com.zdawn.commons.pv;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,14 +13,10 @@ import org.slf4j.LoggerFactory;
  * support add message
  * support use thread pool process message
  * @author zhaobs
- * @date 2018-01-15
+ * @date 2022-01-17
  */
 public class DisposeUnit {
 	private static Logger log = LoggerFactory.getLogger(DisposeUnit.class);
-	/**
-	 * 消息队列
-	 */
-	private MessageQueue msgQueue = null;
 	/**
 	 * 组件状态
 	 * 1 初始
@@ -24,30 +24,66 @@ public class DisposeUnit {
 	 * 3 停止
 	 */
 	private int status = 1;
-	
-	private MsgBroker msgBroker = null;
-	
+	/**
+	 * 处理线程个数
+	 */
+	private int handleThreadCount = 2;
+	/**
+	 * 消息队列实现类
+	 */
+	private String messageQueueClazzName;
+	/**
+	 * 处理单元标识
+	 */
+	private String disposeUnitTag;
+	/**
+	 * 配置参数
+	 */
+	private Map<String,String> para;
+	/**
+	 * 消息处理实现类
+	 */
 	private MessageHandler messageHandler = null;
+	/**
+	 * 消息队列
+	 */
+	private List<MessageQueue<StringMessage>> msgQueueList = null;
 	
-	private Superviser superviser;
+	private List<SingleThreadMsgBroker> msgBrokerList = null;
 	
-	private HandlingMediator mediator;
+	private ConsistencyHash hashRouter;
 	/**
 	 * 添加消息，添加不成功返回false
 	 */
-	public boolean addMessage(Message msg){
+	public boolean addMessage(StringMessage msg){
+		boolean result = false;
 		if(status!=2){
 			log.warn("DisposeUnit is not running status="+status);
 			return false;
 		}
-		return msgQueue.putMessage(msg);
+		if(msg.getHashKey()==null || "".equals(msg.getHashKey())) {
+			//随机put消息
+			int index = generateRandom(msgQueueList.size());
+			MessageQueue<StringMessage> queue = msgQueueList.get(index);
+			result = queue.putMessage(msg);
+		}else {//hash put消息
+			int index = hashRouter.selectHashQueueIndex(msg.getHashKey());
+			MessageQueue<StringMessage> queue = msgQueueList.get(index);
+			result = queue.putMessage(msg);
+		}
+		return result;
+	}
+	//Random bound exclusive
+	private int generateRandom(int bound) {
+		Random rand = new Random();
+		return rand.nextInt(bound);
 	}
 	/**
 	 * 添加消息,如果添加失败,阻塞等待,直到添加成功为止
 	 * @param msg 消息
 	 * @param waitSpanTime 重试添加消息的等待时间-单位毫秒
 	 */
-	public void addMessage(Message msg,long waitSpanTime){
+	public void addMessage(StringMessage msg,long waitSpanTime){
 		boolean success = addMessage(msg);
 		while(!success){
 			try {
@@ -56,22 +92,7 @@ public class DisposeUnit {
 			success = addMessage(msg);
 		}
 	}
-	/**
-	 * 当前处理单元队列深度
-	 */
-	public int getCurrentTaskQueueSize(){
-		return msgQueue.getCurrentQueueSize();
-	}
-	/**
-	 * 可利用队列深度,数值越大可放任务越多
-	 */
-	public int availableTaskQueueSize(){
-		return msgQueue.getMaxSize()-msgQueue.getCurrentQueueSize();
-	}
-	
-	public float getQueueUsingPercent(){
-		return msgQueue.getCurrentQueueSize()/msgQueue.getMaxSize();
-	}
+
 	/**
 	 * 组件初始化,初始化完成即可处理消息
 	 */
@@ -80,19 +101,28 @@ public class DisposeUnit {
 			log.warn("DisposeUnit status is invalid");
 			return;
 		}
-		if(msgQueue==null) throw new RuntimeException("MessageQueue is not setting");
-		if(msgBroker==null) throw new RuntimeException("MsgBroker is not setting");
-		if(messageHandler==null) throw new RuntimeException("MessageHandler is not setting");
-		if(superviser==null) throw new RuntimeException("Superviser is not setting");
-		mediator = new HandlingMediator();
-		mediator.setMessageHandler(messageHandler);
-		mediator.setMsgQueue(msgQueue);
-		mediator.setSuperviser(superviser);
-		msgBroker.configureMediator(mediator);
-		msgBroker.init();
-		msgQueue.configureMediator(mediator);
-		msgQueue.init();
-		superviser.init();
+		msgQueueList = new ArrayList<>();
+		msgBrokerList = new ArrayList<>();
+		for (int i = 0; i < handleThreadCount; i++) {
+			//superviser
+			DefaultSuperviser superviser = new DefaultSuperviser();
+			superviser.init();
+			//queue
+			MessageQueue<StringMessage> queue = loadMessageQueue(messageQueueClazzName);
+			queue.setSuperviser(superviser);
+			queue.init(para);
+			msgQueueList.add(queue);
+			//broker
+			SingleThreadMsgBroker broker = new SingleThreadMsgBroker();
+			broker.setBrokerTag(disposeUnitTag+"-broker-" + i);
+			broker.setMessageQueue(queue);
+			broker.setMessageHandler(messageHandler);
+			broker.setSuperviser(superviser);
+			broker.init();
+			msgBrokerList.add(broker);
+		}
+		hashRouter = new ConsistencyHash(handleThreadCount);
+		hashRouter.init();
 		Runtime.getRuntime().addShutdownHook(new HookThread());
 		this.status = 2;
 	}
@@ -107,7 +137,11 @@ public class DisposeUnit {
 	 */
 	public void stopHandling (){
 		this.status = 3;
-		this.msgBroker.stopWorking();
+		if(msgBrokerList!=null) {
+			for (SingleThreadMsgBroker broker : msgBrokerList) {
+				broker.stopWorking();
+			}
+		}
 		log.info("DisposeUnit already stop");
 	}
 	/**
@@ -116,34 +150,58 @@ public class DisposeUnit {
 	 */
 	public void loadPendingMessage(){
 		log.info("DisposeUnit load pending message now");
-		msgQueue.loadPendingMsgToQueue();
+		if(msgQueueList!=null) {
+			for (MessageQueue<StringMessage> queue : msgQueueList) {
+				queue.loadPendingMsgToQueue();
+			}
+		}
 	}
 
 	public Map<String,Object> getMonitorInfoSnapshot(){
-		Map<String,Object> snap = superviser.getMonitorInfoSnapshot();
-		snap.put("msgQueueCurrentSize", msgQueue==null?0:msgQueue.getCurrentQueueSize());
-		snap.put("msgQueueMaxSize", msgQueue==null?0:msgQueue.getMaxSize());
+		Map<String,Object> snap = new HashMap<>();
+		snap.put("disposeUnitTag", disposeUnitTag);
+		snap.put("status", status);
+		snap.put("handleThreadCount", handleThreadCount);
+		snap.put("messageQueueClazzName", messageQueueClazzName);
+		List<Map<String,Object>> list = new ArrayList<>();
+		for (SingleThreadMsgBroker broker : msgBrokerList) {
+			list.add(broker.getMonitorInfoSnapshot());
+		}
+		snap.put("handleThreadList", list);
 		return snap;
 	}
 	
-
-	public MessageQueue getMsgQueue() {
-		return msgQueue;
+	private MessageQueue<StringMessage> loadMessageQueue(String msgQueueClazzName) {
+		try {
+			Class<?> clazz = getClass().getClassLoader().loadClass(msgQueueClazzName);
+			@SuppressWarnings("unchecked")
+			MessageQueue<StringMessage> queue = (MessageQueue<StringMessage>)clazz.newInstance();
+			return queue;
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
 	}
 	
-	public void setMsgQueue(MessageQueue msgQueue) {
-		this.msgQueue = msgQueue;
+	public int getHandleThreadCount() {
+		return handleThreadCount;
 	}
-	
-	public void setMsgBroker(MsgBroker msgBroker) {
-		this.msgBroker = msgBroker;
+	public void setHandleThreadCount(int handleThreadCount) {
+		this.handleThreadCount = handleThreadCount;
 	}
-
+	public MessageHandler getMessageHandler() {
+		return messageHandler;
+	}
 	public void setMessageHandler(MessageHandler messageHandler) {
 		this.messageHandler = messageHandler;
 	}
-	
-	public void setSuperviser(Superviser superviser) {
-		this.superviser = superviser;
+	public void setPara(Map<String, String> para) {
+		this.para = para;
 	}
+	public void setDisposeUnitTag(String disposeUnitTag) {
+		this.disposeUnitTag = disposeUnitTag;
+	}
+	public void setMessageQueueClazzName(String messageQueueClazzName) {
+		this.messageQueueClazzName = messageQueueClazzName;
+	}
+	
 }
