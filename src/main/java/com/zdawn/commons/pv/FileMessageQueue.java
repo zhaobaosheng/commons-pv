@@ -5,6 +5,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
@@ -114,9 +115,13 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 				return false;
 			}else if(index==0) {//hashKey is empty
 				payload = all.substring(index+1);
+				payload = URLDecoder.decode(payload, "utf-8");
 			}else {
 				hashKey = all.substring(0,index);
+				hashKey = URLDecoder.decode(hashKey, "utf-8");
+				
 				payload = all.substring(index+1);
+				payload = URLDecoder.decode(payload, "utf-8");
 			}
 			StringMessage msg = new StringMessage(payload,hashKey);
 			msg.setMessageId(parts[0]);
@@ -207,7 +212,7 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 			}else {
 				sb.append(URLEncoder.encode(msg.getHashKey(), "utf-8")+"&");
 			}
-			sb.append(msg.getPayload());
+			sb.append(URLEncoder.encode(msg.getPayload(), "utf-8"));
 			fos = new FileOutputStream(path);
 			fos.write(sb.toString().getBytes("utf-8"));
 			fos.flush();
@@ -288,7 +293,7 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 			}else {
 				sb.append(URLEncoder.encode(msg.getHashKey(), "utf-8")+"&");
 			}
-			sb.append(msg.getPayload());
+			sb.append(URLEncoder.encode(msg.getPayload(), "utf-8"));
 			fos = new FileOutputStream(path);
 			fos.write(sb.toString().getBytes("utf-8"));
 			fos.flush();
@@ -338,7 +343,11 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 		String nameExceptExt = fileName.substring(0, index);
 		String[] parts = nameExceptExt.split("-");
 		String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+fileName;
-		String destPath = queueMessageStorePath+'/'+errorMsgPath+'/'+parts[0]+'-'+parts[1]+"-rejection.msg";
+		
+		String destPath = queueMessageStorePath+ "/s2";
+		File file = new File(destPath);
+		if(!file.exists()) file.mkdirs();
+		destPath = destPath +'/'+parts[0]+'-'+parts[1]+".msg";
 		if(!moveFile(path, destPath)){
 			logger.error(path+" rename "+destPath+" failture");
 		}
