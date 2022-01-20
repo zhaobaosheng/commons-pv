@@ -149,16 +149,16 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 	
 	public void init(Map<String,String> para) {
 		//参数
-		String temp = para.get("queue-max-size");
+		String temp = para.get("queueMaxSize");
 		if(temp!=null && !"".equals(temp)) {
 			maxSize = Integer.parseInt(temp);
 		}
-		temp = para.get("queue-msg-handle-times");
+		temp = para.get("msgHandleTimes");
 		if(temp!=null && !"".equals(temp)) {
 			msgHandleTimes = Integer.parseInt(temp);
 		}
-		temp = para.get("queue-msg-store-path");
-		if(temp ==null || "".equals(temp)) throw new RuntimeException("queue-msg-store-path 未设置");
+		temp = para.get("msgStorePath");
+		if(temp ==null || "".equals(temp)) throw new RuntimeException("msgStorePath 未设置");
 		queueMessageStorePath = temp;
 		//检查创建目录
 		String path = queueMessageStorePath+'/'+pendingMsgPath;
@@ -270,7 +270,35 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 			moveMessage(fileName);
 		}
 	}
-
+	
+	public void saveMsgLog(StringMessage msg, int msgSource) throws Exception{
+		if(msg.getMessageId()==null) {
+			msg.setMessageId(UUID.randomUUID().toString().replace("-", ""));
+		}
+		String fileName = msg.getMessageId() +'-'+System.currentTimeMillis()+".msg";
+		String path = queueMessageStorePath+ "/s"+msgSource;
+		File file = new File(path);
+		if(!file.exists()) file.mkdirs();
+		path = path + '/' + fileName;
+		FileOutputStream fos = null;
+		try {
+			StringBuilder sb = new StringBuilder();
+			if(msg.getHashKey()==null || "".equals(msg.getHashKey())) {
+				sb.append('&');
+			}else {
+				sb.append(URLEncoder.encode(msg.getHashKey(), "utf-8")+"&");
+			}
+			sb.append(msg.getPayload());
+			fos = new FileOutputStream(path);
+			fos.write(sb.toString().getBytes("utf-8"));
+			fos.flush();
+		} catch (Exception e) {
+			throw e;
+		}finally{
+			try {if(fos!=null) fos.close();} catch (Exception e) {}
+		}
+	}
+	
 	/**
 	 * 检查消息执行次数
 	 * 如果大于等于设置执行次数,移动到错误消息存储路径

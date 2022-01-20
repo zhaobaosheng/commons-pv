@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
+import javax.sql.DataSource;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,6 +46,10 @@ public class DisposeUnit {
 	 * 消息处理实现类
 	 */
 	private MessageHandler messageHandler = null;
+	/**
+	 * 存储消息数据库源  com.zdawn.commons.pv.JdbcMessageQueue 需要设置
+	 */
+	private DataSource dataSource; 
 	/**
 	 * 消息队列
 	 */
@@ -101,6 +107,7 @@ public class DisposeUnit {
 			log.warn("DisposeUnit status is invalid");
 			return;
 		}
+		para.put("disposeUnitTag", disposeUnitTag);
 		msgQueueList = new ArrayList<>();
 		msgBrokerList = new ArrayList<>();
 		for (int i = 0; i < handleThreadCount; i++) {
@@ -110,11 +117,16 @@ public class DisposeUnit {
 			//queue
 			MessageQueue<StringMessage> queue = loadMessageQueue(messageQueueClazzName);
 			queue.setSuperviser(superviser);
+			if(queue instanceof JdbcMessageQueue) {
+				JdbcMessageQueue jdbcQueue = (JdbcMessageQueue)queue;
+				jdbcQueue.setDataSource(dataSource);
+				para.put("queueNo","queue"+i);
+			}
 			queue.init(para);
 			msgQueueList.add(queue);
 			//broker
 			SingleThreadMsgBroker broker = new SingleThreadMsgBroker();
-			broker.setBrokerTag(disposeUnitTag+"-broker-" + i);
+			broker.setBrokerTag("broker-" + i);
 			broker.setMessageQueue(queue);
 			broker.setMessageHandler(messageHandler);
 			broker.setSuperviser(superviser);
@@ -126,6 +138,7 @@ public class DisposeUnit {
 		Runtime.getRuntime().addShutdownHook(new HookThread());
 		this.status = 2;
 	}
+	
 	class HookThread extends Thread {
 		@Override
 		public void run() {
@@ -171,6 +184,16 @@ public class DisposeUnit {
 		return snap;
 	}
 	
+	/**
+	 * 如果添加消息失败,可使用此方法保存消息日志
+	 * <br>添加失败抛出异常
+	 */
+	public void saveMsgLog(StringMessage msg) throws Exception {
+		int index = generateRandom(msgQueueList.size());
+		MessageQueue<StringMessage> queue = msgQueueList.get(index);
+		queue.saveMsgLog(msg, 1);
+	}
+	
 	private MessageQueue<StringMessage> loadMessageQueue(String msgQueueClazzName) {
 		try {
 			Class<?> clazz = getClass().getClassLoader().loadClass(msgQueueClazzName);
@@ -203,5 +226,7 @@ public class DisposeUnit {
 	public void setMessageQueueClazzName(String messageQueueClazzName) {
 		this.messageQueueClazzName = messageQueueClazzName;
 	}
-	
+	public void setDataSource(DataSource dataSource) {
+		this.dataSource = dataSource;
+	}
 }

@@ -48,4 +48,10 @@ public interface MessageQueue<T> {
 	public void onHandleMsgResult(int result,MessageWrapper<T> msgWrapper);
 	
 	public void setSuperviser(Superviser superviser);
+	/**
+	 * save message log
+	 * @param msgSource 1 put failure message 2 rejection message
+	 * @throws Exception
+	 */
+	public void saveMsgLog(T msg,int msgSource) throws Exception;
 }
