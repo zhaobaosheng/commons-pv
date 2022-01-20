@@ -71,7 +71,11 @@ public class JdbcMessageQueue implements MessageQueue<StringMessage> {
 	/**
 	 * 添加消息
 	 */
-	public synchronized boolean putMessage(StringMessage msg) {
+	public boolean putMessage(StringMessage msg) {
+		return putMessage(msg, true);
+	}
+	
+	private synchronized boolean putMessage(StringMessage msg,boolean saveMsg) {
 		if(superviser.getBreakerStatus()==1){
 			logger.warn("breaker status is open,can not put message");
 			return false;
@@ -79,7 +83,7 @@ public class JdbcMessageQueue implements MessageQueue<StringMessage> {
 		if(queueMsg.size()>=maxSize) return false;
 		//保存消息到数据库
 		try {
-			saveMsg(msg);
+			if(saveMsg) saveMsg(msg);
 			MessageWrapper<StringMessage> wrapper = new MessageWrapper<StringMessage>(msg);
 			queueMsg.add(wrapper);
 		} catch (Exception e) {
@@ -92,7 +96,7 @@ public class JdbcMessageQueue implements MessageQueue<StringMessage> {
 	
 	private void saveMsg(StringMessage msg) throws Exception {
 		String sql = "insert into "+msgStoreTableName+"(id,queue_no,hash_key,content,create_time,exec_count,msg_state)"
-				+ " values(?,?,?,?,?,?,?,?)";
+				+ " values(?,?,?,?,?,?,?)";
 		Connection con = null;
 		PreparedStatement ps = null;
 		if(msg.getMessageId()==null) {
@@ -203,7 +207,7 @@ public class JdbcMessageQueue implements MessageQueue<StringMessage> {
 			}else{//添加队列
 				StringMessage msg = new StringMessage(payload, hashKey);
 				msg.setMessageId(msgId);
-				if(putMessage(msg)){
+				if(putMessage(msg,false)){
 					updateSql = "update "+msgStoreTableName+" set msg_state=? where id=?";
 					psUpdate = con.prepareStatement(updateSql);
 					psUpdate.setInt(1,1);
@@ -253,13 +257,13 @@ public class JdbcMessageQueue implements MessageQueue<StringMessage> {
 			boolean exist = rs.next();
 			if(!exist) {
 				psInsert = con.prepareStatement(insertSql);
-				ps.setString(1,msg.getMessageId());
-				ps.setString(2,msg.getHashKey());
-				ps.setString(3,msg.getPayload());
-				ps.setTimestamp(4,new Timestamp(System.currentTimeMillis()));
-				ps.setString(5,disposeUnitTag);
-				ps.setInt(6,msgSource);
-				ps.executeUpdate();
+				psInsert.setString(1,msg.getMessageId());
+				psInsert.setString(2,msg.getHashKey());
+				psInsert.setString(3,msg.getPayload());
+				psInsert.setTimestamp(4,new Timestamp(System.currentTimeMillis()));
+				psInsert.setString(5,disposeUnitTag);
+				psInsert.setInt(6,msgSource);
+				psInsert.executeUpdate();
 			}else {
 				logger.warn("message already exist id="+msg.getMessageId());
 			}
