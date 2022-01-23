@@ -7,7 +7,7 @@ public class TestDisposeUnit {
 
 	public static void main(String[] args) {
 		Map<String,String> para = new HashMap<>();
-		para.put("queue-msg-store-path", "E:\\source-code\\mygit\\commons-pv\\src\\test\\pv");
+		para.put("msgStorePath", "E:\\source-code\\mygit\\commons-pv\\src\\test\\pv");
 		DisposeUnit disposeUnit = new DisposeUnit();
 		disposeUnit.setMessageHandler(new MockMessageHandler());
 		disposeUnit.setDisposeUnitTag("test");
@@ -25,6 +25,7 @@ public class TestDisposeUnit {
 				msg.setHashKey("==="+count);
 				boolean success = disposeUnit.addMessage(msg);
 				System.out.println("add message result="+success);
+				if(count%100==0) disposeUnit.saveMsgLog(msg);
 			} catch (Exception e) {}
 			if(count%1000==0){
 				System.out.println(disposeUnit.getMonitorInfoSnapshot());
