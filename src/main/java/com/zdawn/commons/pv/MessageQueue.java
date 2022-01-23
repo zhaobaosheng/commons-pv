@@ -6,7 +6,7 @@ import java.util.Map;
  * message queue
  * cache waiting dispose message
  * @author zhaobaosheng
- * 2018-01-11
+ * 2022-01-16
  */
 public interface MessageQueue<T> {
 	/**

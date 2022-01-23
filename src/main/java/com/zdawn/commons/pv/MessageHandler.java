@@ -2,7 +2,7 @@ package com.zdawn.commons.pv;
 /**
  * dispose message interface
  * @author zhaobaosheng
- * 2018-01-12
+ * 2022-01-16
  */
 public interface MessageHandler {
 	/**

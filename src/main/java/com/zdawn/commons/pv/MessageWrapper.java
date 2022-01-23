@@ -5,7 +5,7 @@ import java.util.Map;
 /**
  * 消息包装类
  * @author zhaobaosheng
- * 2018-01-12
+ * 2022-01-16
  */
 public class MessageWrapper<T> {
 	/**

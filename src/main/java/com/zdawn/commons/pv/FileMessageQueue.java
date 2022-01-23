@@ -46,6 +46,10 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 	 */
 	private String errorMsgPath="error";
 	/**
+	 * 队列编号
+	 */
+	private String queueNo;
+	/**
 	 * 消息处理次数
 	 */
 	private int msgHandleTimes = 3;
@@ -101,9 +105,9 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 			String[] parts = nameExceptExt.split("-");
 			if(parts.length!=3) return false;
 			//rename
-			String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+fileName;
+			String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+queueNo+'/'+fileName;
 			String destFileName = nameExceptExt +".que";
-			String destPath = queueMessageStorePath+'/'+pendingMsgPath+'/'+destFileName;
+			String destPath = queueMessageStorePath+'/'+pendingMsgPath+'/'+queueNo+'/'+destFileName;
 			if(!moveFile(path, destPath)) return false;
 			//load data
 			byte[] data = readFile(destPath);
@@ -165,15 +169,20 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 		temp = para.get("msgStorePath");
 		if(temp ==null || "".equals(temp)) throw new RuntimeException("msgStorePath 未设置");
 		queueMessageStorePath = temp;
+		
+		temp = para.get("queueNo");
+		if(temp ==null || "".equals(temp)) throw new RuntimeException("queueNo 未设置");
+		queueNo = temp;
+		
 		//检查创建目录
-		String path = queueMessageStorePath+'/'+pendingMsgPath;
+		String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+queueNo;
 		File file = new File(path);
 		if(!file.exists()) file.mkdirs();
-		path = queueMessageStorePath+'/'+errorMsgPath;
+		path = queueMessageStorePath+'/'+errorMsgPath+'/'+queueNo;
 		file = new File(path);
 		if(!file.exists()) file.mkdirs();
 		//*.que消息重名*.msg
-		path = queueMessageStorePath+'/'+pendingMsgPath;
+		path = queueMessageStorePath+'/'+pendingMsgPath+'/'+queueNo;
 		file = new File(path);
 		File[] fileList = file.listFiles();
 		if(fileList!=null) {
@@ -203,7 +212,7 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 			msg.setMessageId(UUID.randomUUID().toString().replace("-", ""));
 		}
 		String fileName = msg.getMessageId() +'-'+System.currentTimeMillis()+'-'+times+'.'+ext;
-		String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+fileName;
+		String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+queueNo+'/'+fileName;
 		FileOutputStream fos = null;
 		try {
 			StringBuilder sb = new StringBuilder();
@@ -225,7 +234,7 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 	}
 	
 	public void loadPendingMsgToQueue(){
-		String path = queueMessageStorePath+'/'+pendingMsgPath;
+		String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+queueNo;
 		File file = new File(path);
 		if (!file.exists()) {
 			logger.error("load pending message to queue error "+path+" is not exist");
@@ -314,8 +323,8 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 			int count = Integer.parseInt(times);
 			if(count>=msgHandleTimes){
 				add = false;
-				String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+fileName;
-				String destPath = queueMessageStorePath +'/'+ errorMsgPath+'/'+fileName;
+				String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+queueNo+'/'+fileName;
+				String destPath = queueMessageStorePath +'/'+ errorMsgPath+'/'+queueNo+'/'+fileName;
 				if(!moveFile(path, destPath)){
 					logger.error(fileName+" rename failture");
 				}
@@ -329,7 +338,7 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 	 * 删除消息
 	 */
 	private void removeMessage(String fileName){
-		String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+fileName;
+		String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+queueNo+'/'+fileName;
 		File file = new File(path);
 		if(!file.exists()) return;
 		if(!file.delete()){//删除失败
@@ -342,7 +351,7 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 		if(index==-1) return;
 		String nameExceptExt = fileName.substring(0, index);
 		String[] parts = nameExceptExt.split("-");
-		String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+fileName;
+		String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+queueNo+'/'+fileName;
 		
 		String destPath = queueMessageStorePath+ "/s2";
 		File file = new File(destPath);
@@ -356,7 +365,7 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 	private void saveErrorLog(String filePath){
 		FileOutputStream fos = null;
 		try {
-			String path = queueMessageStorePath+'/'+pendingMsgPath+"/del-msg-error.log";
+			String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+queueNo+"/del-msg-error.log";
 			fos = new FileOutputStream(path,true);
 			fos.write((filePath+'\n').getBytes());
 			fos.flush();
@@ -368,7 +377,7 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 	}
 	
 	private void renameMsgFile(String fileName,int increaseTimes){
-		String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+fileName;
+		String path = queueMessageStorePath+'/'+pendingMsgPath+'/'+queueNo+'/'+fileName;
 		int index = fileName.lastIndexOf('.');
 		if(index==-1) return;
 		String nameExceptExt = fileName.substring(0, index);
@@ -378,9 +387,9 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 		count = count + increaseTimes;
 		String destPath = "";
 		if(count>=msgHandleTimes){//移动错误消息目录
-			destPath = queueMessageStorePath+'/'+errorMsgPath+'/'+parts[0]+'-'+parts[1]+'-'+count+".msg";
+			destPath = queueMessageStorePath+'/'+errorMsgPath+'/'+queueNo+'/'+parts[0]+'-'+parts[1]+'-'+count+".msg";
 		}else{//增加执行次数
-			destPath = queueMessageStorePath+'/'+pendingMsgPath+'/'+parts[0]+'-'+parts[1]+'-'+count+".msg";
+			destPath = queueMessageStorePath+'/'+pendingMsgPath+'/'+queueNo+'/'+parts[0]+'-'+parts[1]+'-'+count+".msg";
 		}
 		if(!moveFile(path, destPath)){
 			logger.error(path+" rename "+destPath+" failture");
@@ -450,5 +459,8 @@ public class FileMessageQueue implements MessageQueue<StringMessage>{
 	}
 	public void setSuperviser(Superviser superviser) {
 		this.superviser = superviser;
+	}
+	public void setQueueNo(String queueNo) {
+		this.queueNo = queueNo;
 	}
 }

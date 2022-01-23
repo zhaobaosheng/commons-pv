@@ -120,8 +120,8 @@ public class DisposeUnit {
 			if(queue instanceof JdbcMessageQueue) {
 				JdbcMessageQueue jdbcQueue = (JdbcMessageQueue)queue;
 				jdbcQueue.setDataSource(dataSource);
-				para.put("queueNo","queue"+i);
 			}
+			para.put("queueNo","queue"+i);
 			queue.init(para);
 			msgQueueList.add(queue);
 			//broker
