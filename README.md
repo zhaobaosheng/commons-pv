@@ -2,6 +2,7 @@
 异步消息处理组件
 
 JdbcMessageQueue mysql表结构
+```
 CREATE TABLE `msg_queue_store` (
   `id` varchar(40) NOT NULL COMMENT '消息标识',
   `queue_no` varchar(20) COMMENT '队列编号',
@@ -23,3 +24,4 @@ CREATE TABLE `msg_queue_log` (
   `msg_source` decimal(1,0) DEFAULT NULL COMMENT '消息来源 1添加失败的消息 2拒绝执行的消息',
   PRIMARY KEY (`id`)
 );
+```
