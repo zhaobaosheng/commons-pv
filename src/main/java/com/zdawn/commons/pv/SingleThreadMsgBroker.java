@@ -67,35 +67,45 @@ public class SingleThreadMsgBroker extends Thread implements MsgBroker{
 	public void handleMessage(MessageWrapper<StringMessage> msgWrapper) {
 		int status = superviser.getBreakerStatus();
 		if(status==0 || status==2){// not open
-			long start = System.currentTimeMillis();
-			try {
-				//调用处理消息方法
-				int result = messageHandler.handleMessage(msgWrapper.getMsg());
-				long end  = System.currentTimeMillis();
-				if(result==1) {//处理成功
-					messageQueue.onHandleMsgResult(1, msgWrapper);
-					superviser.collectMessageHandleResult(start,end-start,true);
-					//semi-open reset breaker status
-					if(status==2) superviser.forceCloseBreaker();
-				}else if(result==0) {//处理失败
-					messageQueue.onHandleMsgResult(0, msgWrapper);
-					superviser.collectMessageHandleResult(start,end-start,false);
-				}else {//消息
-					messageQueue.onHandleMsgResult(2, msgWrapper);
-					superviser.collectMessageRejection(start, end-start);
-				}
-			} catch (Exception e) {
-				//error
-				long end  = System.currentTimeMillis();
+			handleMsg(status, msgWrapper);
+		}else if(status==1){//open
+			while(true) {
+				try {
+					log.warn("breaker status is open. Now wait next period to do!");
+					Thread.sleep(superviser.getPauseMessageProcessingTime());
+				} catch (InterruptedException e) {}
+				//get breaker status again
+				status = superviser.getBreakerStatus();
+				if(status != 1) break;
+			}
+			handleMsg(status, msgWrapper);
+		}
+	}
+	
+	private void handleMsg(int status,MessageWrapper<StringMessage> msgWrapper) {
+		long start = System.currentTimeMillis();
+		try {
+			//调用处理消息方法
+			int result = messageHandler.handleMessage(msgWrapper.getMsg());
+			long end  = System.currentTimeMillis();
+			if(result==1) {//处理成功
+				messageQueue.onHandleMsgResult(1, msgWrapper);
+				superviser.collectMessageHandleResult(start,end-start,true);
+				//semi-open reset breaker status
+				if(status==2) superviser.forceCloseBreaker();
+			}else if(result==0) {//处理失败
 				messageQueue.onHandleMsgResult(0, msgWrapper);
 				superviser.collectMessageHandleResult(start,end-start,false);
-				log.error("invoke MessageHandler.handleMessage",e);
+			}else {//消息
+				messageQueue.onHandleMsgResult(2, msgWrapper);
+				superviser.collectMessageRejection(start, end-start);
 			}
-		}else if(status==1){//open
-			try {
-				log.warn("breaker status is open. Now wait next period to do!");
-				Thread.sleep(superviser.getPauseMessageProcessingTime());
-			} catch (InterruptedException e) {}
+		} catch (Exception e) {
+			//error
+			long end  = System.currentTimeMillis();
+			messageQueue.onHandleMsgResult(0, msgWrapper);
+			superviser.collectMessageHandleResult(start,end-start,false);
+			log.error("invoke MessageHandler.handleMessage",e);
 		}
 	}
 	
